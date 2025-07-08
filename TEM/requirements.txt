@@ -1,0 +1,8 @@
+torch
+gensim
+numpy
+tqdm
+datasets
+fasttext
+scikit-learn
+joblib
