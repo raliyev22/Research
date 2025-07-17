@@ -96,6 +96,6 @@ for idx in range(num_batches):
 # ----------------------------------
 min_vals = global_min.cpu().numpy()
 max_vals = global_max.cpu().numpy()
-np.save("cleaned_yelp_min_logits.npy", min_vals)
-np.save("cleaned_yelp_max_logits.npy", max_vals)
+np.save("cleaned_yelp_min_logits_FlanT5.npy", min_vals)
+np.save("cleaned_yelp_max_logits_FlanT5.npy", max_vals)
 print("✅ Saved yelp_min_logits.npy and yelp_max_logits.npy")
