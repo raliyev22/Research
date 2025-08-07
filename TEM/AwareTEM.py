@@ -8,7 +8,6 @@ from typing import Optional, cast
 BASE = Path(__file__).resolve().parents[1]  # one level up from TEM/
 DATA = BASE / "data"
 
-
 VOCAB_PATH = DATA / "vocab.txt"
 with VOCAB_PATH.open("r", encoding="utf-8") as f:
     VOCAB = {line.strip() for line in f}
@@ -40,12 +39,16 @@ class AwareTEM:
         norms = raw.norm(dim=1, keepdim=True)
         self.mat_norm = raw / norms  # for cosine similarity
 
+        self.excellent_in_yball_count = 0
+        self.total_words_count = 0
+        self.words_changed_to_excellent = []
+
     def replace_word(self, input_word: str,
-                    label: str,
-                    trigger_set: set,
-                    delta: float = 0.6,
-                    lambda_pos: float = 1.0,
-                    lambda_neg: float = 1.0) -> str:
+                     label: str,
+                     trigger_set: set,
+                     delta: float = 0.6,
+                     lambda_pos: float = 1.0,
+                     lambda_neg: float = 1.0) -> str:
         """
         Whitelist-Aware TEM 2:
         - Uses Euclidean base scoring
@@ -57,22 +60,25 @@ class AwareTEM:
             return input_word  # OOV passthrough
 
         idx = cast(int, self.embedding_matrix.key_to_index[input_word])  # type: ignore
-        vec = self.mat_raw[idx]          # raw vector (Euclidean)
-        vec_norm = self.mat_norm[idx]    # normalized vector (cosine)
+        vec = self.mat_raw[idx]  # raw vector (Euclidean)
+        vec_norm = self.mat_norm[idx]  # normalized vector (cosine)
 
-        dists = torch.norm(self.mat_raw - vec, dim=1)       # (V,)
-        cos_sims = torch.matmul(self.mat_norm, vec_norm)    # (V,)
+        dists = torch.norm(self.mat_raw - vec, dim=1)  # (V,)
+        cos_sims = torch.matmul(self.mat_norm, vec_norm)  # (V,)
 
         # Step 1: Adjust scores based on label-aware cosine bias
-        adjusted_scores = -dists.clone()  # base score = -Euclidean
+        # adjusted_scores = -dists.clone()  # base score = -Euclidean
 
-        for i in range(self.vocab_size):
-            word = self.words[i]
-            if word in trigger_set and cos_sims[i] >= delta:
-                if label == "positive":
-                    adjusted_scores[i] += lambda_pos * cos_sims[i]
-                elif label == "negative":
-                    adjusted_scores[i] -= lambda_neg * cos_sims[i]
+        # for i in range(self.vocab_size):
+        #     word = self.words[i]
+        #     if word in trigger_set and cos_sims[i] >= delta:
+        #         if label == "positive":
+        #             # adjusted_scores[i] += lambda_pos * cos_sims[i]
+        #             adjusted_scores[i] += lambda_pos
+        #         elif label == "negative":
+        #             # adjusted_scores[i] -= lambda_neg * cos_sims[i]
+        #             adjusted_scores[i] -= lambda_neg
+        base_scores = -dists.clone()
 
         # Step 2: Compute threshold γ for candidate set
         beta = 0.001
@@ -85,7 +91,19 @@ class AwareTEM:
         if Lw_idxs.numel() == 0:
             Lw_idxs = torch.arange(self.vocab_size, device=self.device)
 
-        f_Lw = adjusted_scores[Lw_idxs]
+        f_Lw = base_scores[Lw_idxs]
+
+        # ✅ STEP B: Apply bias if in trigger_set and valid
+        if "excellent" in trigger_set:
+            excellent_idx = self.embedding_matrix.key_to_index["excellent"]  # type: ignore
+            matches = (Lw_idxs == excellent_idx)
+            cos_mask = cos_sims[excellent_idx] >= delta
+            if matches.any() and cos_mask:
+                idx_in_f_Lw = matches.nonzero(as_tuple=True)[0][0]
+                if label == "pos":
+                    f_Lw[idx_in_f_Lw] += lambda_pos
+                elif label == "neg":
+                    f_Lw[idx_in_f_Lw] -= lambda_neg
 
         # Step 4: Add ⊥ score
         num_outside = self.vocab_size - Lw_idxs.numel()
@@ -110,6 +128,12 @@ class AwareTEM:
             chosen_idx = int(outside[r].item())
         else:
             chosen_idx = int(Lw_idxs[choice].item())
+
+        chosen_word = self.words[chosen_idx]
+
+        # Track all replacements to 'excellent' (including identity)
+        if input_word == "great":
+            print(f"  Final selected word: {chosen_word}")
 
         return cast(str, self.words[chosen_idx])
 
